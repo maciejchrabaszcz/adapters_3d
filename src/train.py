@@ -27,7 +27,7 @@ import gc
 from data_loader import PANORAMADataset
 import argparse
 from lightning.fabric import Fabric
-
+from models.lora_finetuning import get_model_with_lora
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data",
@@ -130,7 +130,14 @@ parser.add_argument("--strategy",
                     default="ddp",
                     type=str,
                     help="Strategy of training.")
-
+parser.add_argument("--lora_r",
+                    default=None,
+                    type=int,
+                    help="Rank of LoRA.")
+parser.add_argument("--lora_alpha",
+                    default=8,
+                    type=int,
+                    help="alpha of LoRA.")
 args = parser.parse_args()
 
 
@@ -425,6 +432,8 @@ elif args.model == "SwinSMT":
 else:
     raise NotImplementedError("This model not exists!")
 
+if args.lora_r is not None:
+    model = get_model_with_lora(model, args.lora_r, args.lora_alpha)
 
 if args.optimizer == "AdamW":
     optimizer = torch.optim.AdamW(model.parameters(),
