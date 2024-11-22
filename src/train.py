@@ -5,29 +5,24 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 parent_dir_path = os.path.abspath(os.path.join(dir_path, os.pardir))
 sys.path.insert(0, parent_dir_path)
 
-import torch
-from torch.optim.lr_scheduler import CosineAnnealingLR
+import argparse
+import gc
 
+import torch
+from lightning.fabric import Fabric
+from monai.data import DataLoader, decollate_batch
+from monai.inferers import sliding_window_inference
+from monai.losses import DiceCELoss
+from monai.metrics import DiceMetric
+from monai.networks.nets import SegResNet, SwinUNETR
+from monai.transforms import AsDiscrete
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
-from monai.losses import DiceCELoss
-from monai.inferers import sliding_window_inference
-from monai.transforms import AsDiscrete
-from monai.metrics import DiceMetric
-from monai.networks.nets import SwinUNETR
-from monai.networks.nets import SegResNet
-from models.unet3d import UNet3D
-from models.swin_smt import SwinSMT
-
-from monai.data import (
-    DataLoader,
-    decollate_batch
-)
-import gc
 from data_loader import PANORAMADataset
-import argparse
-from lightning.fabric import Fabric
 from models.lora_finetuning import get_model_with_lora
+from models.swin_smt import SwinSMT
+from models.unet3d import UNet3D
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data",
@@ -148,15 +143,18 @@ def load(model, model_dict):
     else:
         state_dict = model_dict
     current_model_dict = model.state_dict()
+    not_loaded_keys = [k for k in current_model_dict.keys() if k not in state_dict.keys()]
     for k in current_model_dict.keys():
         if (k in state_dict.keys()) and (state_dict[k].size() == current_model_dict[k].size()):
             print(k)
+            not_loaded_keys.append(k)
     new_state_dict = {
         k: state_dict[k] if (k in state_dict.keys()) and (state_dict[k].size() == current_model_dict[k].size()) else
         current_model_dict[k]
         for k in current_model_dict.keys()}
+
     model.load_state_dict(new_state_dict, strict=True)
-    return model
+    return model, not_loaded_keys
 
 
 def save_checkpoint(global_step, model, optimizer, scheduler, scaler):
@@ -322,7 +320,7 @@ if args.model == "VoCo_B":
     pretrained_path = "/net/tscratch/people/plgszymonplotka/PANORAMA/VoCo_B_SSL_head.pt"
     print("Loading Weights from the Path {}".format(pretrained_path))
     model_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
-    model = load(model, model_dict)
+    model, keys_not_loaded = load(model, model_dict)
 
 elif args.model == "VoCo_L":
     model = SwinUNETR(img_size=args.patch_size,
@@ -333,7 +331,7 @@ elif args.model == "VoCo_L":
     pretrained_path = "/net/tscratch/people/plgszymonplotka/PANORAMA/VoCo_B_SSL_head.pt"
     print("Loading Weights from the Path {}".format(pretrained_path))
     model_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
-    model = load(model, model_dict)
+    model, keys_not_loaded = load(model, model_dict)
 
 elif args.model == "VoComni_B":
     model = SwinUNETR(img_size=args.patch_size,
@@ -344,7 +342,7 @@ elif args.model == "VoComni_B":
     pretrained_path = "/net/tscratch/people/plgszymonplotka/PANORAMA/VoComni_B.pt"
     print("Loading Weights from the Path {}".format(pretrained_path))
     model_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
-    model = load(model, model_dict)
+    model, keys_not_loaded = load(model, model_dict)
 
 elif args.model == "VoComni_L":
     model = SwinUNETR(img_size=args.patch_size,
@@ -355,7 +353,7 @@ elif args.model == "VoComni_L":
     pretrained_path = "/net/tscratch/people/plgszymonplotka/PANORAMA/VoComni_L.pt"
     print("Loading Weights from the Path {}".format(pretrained_path))
     model_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
-    model = load(model, model_dict)
+    model, keys_not_loaded = load(model, model_dict)
 
 elif args.model == "SuPreM_Swin":
     model = SwinUNETR(img_size=args.patch_size,
@@ -427,13 +425,18 @@ elif args.model == "SwinSMT":
     pretrained_path = "/net/tscratch/people/plgszymonplotka/PANORAMA/swin_smt.pt"
     print("Loading Weights from the Path {}".format(pretrained_path))
     model_dict = torch.load(pretrained_path, map_location=torch.device('cpu'))
-    model = load(model, model_dict)
+    model, keys_not_loaded = load(model, model_dict)
 
 else:
     raise NotImplementedError("This model not exists!")
 
 if args.lora_r is not None:
-    model = get_model_with_lora(model, args.lora_r, args.lora_alpha)
+    model = get_model_with_lora(
+        model,
+        args.lora_r,
+        args.lora_alpha,
+        keys_not_loaded=keys_not_loaded
+    )
 
 if args.optimizer == "AdamW":
     optimizer = torch.optim.AdamW(model.parameters(),
