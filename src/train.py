@@ -365,6 +365,7 @@ elif args.model == "SuPreM_Swin":
     store_dict = model.state_dict()
     model_dict = torch.load(args.pretrain)['net']
     amount = 0
+    used_keys = []
     for key in model_dict.keys():
         new_key = '.'.join(key.split('.')[1:])
         if 'backbone' in new_key:
@@ -372,6 +373,8 @@ elif args.model == "SuPreM_Swin":
             if n_key in store_dict.keys():
                 store_dict[n_key] = model_dict[key]
                 amount += 1
+                used_keys.append(n_key)
+    keys_not_loaded = [k for k in store_dict.keys() if k not in used_keys]
     model.load_state_dict(store_dict)
     print('Use SuPreM SwinUnetr backbone pretrained weights')
 
@@ -380,11 +383,14 @@ elif args.model == "SuPreM_3DUNet":
     model_dict = torch.load(args.pretrain)['net']
     store_dict = model.state_dict()
     amount = 0
+    used_keys = []
     for key in model_dict.keys():
         new_key = '.'.join(key.split('.')[2:])
         if new_key in store_dict.keys():
             store_dict[new_key] = model_dict[key]
             amount += 1
+            used_keys.append(new_key)
+    keys_not_loaded = [k for k in store_dict.keys() if k not in used_keys]
 
     model.load_state_dict(store_dict)
     print('Use SuPreM U-Net backbone pretrained weights')
@@ -402,10 +408,13 @@ elif args.model == "SuPreM_SegResNet":
     store_dict = model.state_dict()
     simplified_model_dict = {simplify_key(k): v for k, v in model_dict.items()}
     amount = 0
+    keys_used = []
     for key in store_dict.keys():
         if key in simplified_model_dict and 'conv_final.2.conv' not in key:
             store_dict[key] = simplified_model_dict[key]
             amount += 1
+            keys_used.append(key)
+    keys_not_loaded = [k for k in store_dict.keys() if k not in used_keys]
     assert amount == (len(store_dict.keys()) - 2), 'the pre-trained model is not loaded successfully'
     print('loading weights', amount, len(store_dict.keys()))
     model.load_state_dict(store_dict)
